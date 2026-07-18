@@ -49,6 +49,8 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import EmailProvider from "next-auth/providers/email";
 import GoogleProvider from "next-auth/providers/google";
 import type { Provider } from "next-auth/providers/index";
+
+import { FinngoSupabaseProvider } from "./finngoSupabaseProvider";
 import { getOrgUsernameFromEmail } from "../signup/utils/getOrgUsernameFromEmail";
 import { dub } from "./dub";
 import { ErrorCode } from "./ErrorCode";
@@ -354,6 +356,11 @@ if (OUTLOOK_LOGIN_ENABLED && OUTLOOK_CLIENT_ID && OUTLOOK_CLIENT_SECRET) {
       },
     })
   );
+}
+
+// Finngo Supabase SSO — only exposed when the Finngo project URL is configured.
+if (process.env.SUPABASE_URL) {
+  providers.push(FinngoSupabaseProvider);
 }
 
 providers.push(
