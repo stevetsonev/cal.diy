@@ -34,6 +34,16 @@ async function handle(token: string | null, origin: string) {
     cache: "no-store",
   });
   const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
+  // CRITICAL: NextAuth's CSRF check is double-submit — the csrfToken in the form body must match
+  // the csrf COOKIE the browser sends. This server-side fetch received that cookie, but the
+  // BROWSER never saw it (fresh new tab = no cookies) — so forward the Set-Cookie header(s)
+  // verbatim onto OUR response, or the auto-submit fails CSRF -> CredentialsSignin -> /auth/login.
+  const csrfSetCookies: string[] =
+    typeof (csrfRes.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie === "function"
+      ? (csrfRes.headers as unknown as { getSetCookie: () => string[] }).getSetCookie()
+      : csrfRes.headers.get("set-cookie")
+      ? [csrfRes.headers.get("set-cookie") as string]
+      : [];
 
   const action = new URL("/api/auth/callback/finngo-supabase", origin).toString();
   const callbackUrl = new URL("/", origin).toString();
@@ -48,7 +58,7 @@ async function handle(token: string | null, origin: string) {
 </form><script>document.getElementById('f').submit()</script>
 <noscript>Enable JavaScript to finish signing in to Finngo Scheduling.</noscript></body></html>`;
 
-  return new NextResponse(html, {
+  const res = new NextResponse(html, {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -56,6 +66,11 @@ async function handle(token: string | null, origin: string) {
       "referrer-policy": "no-referrer",
     },
   });
+  // Hand the browser the csrf cookie matching the embedded csrfToken (see above).
+  for (const cookie of csrfSetCookies) {
+    res.headers.append("set-cookie", cookie);
+  }
+  return res;
 }
 
 // GET NEVER accepts a token (a token in a URL/query would leak via history/Referer/logs).
