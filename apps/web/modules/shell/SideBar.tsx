@@ -157,6 +157,20 @@ export function SideBar({ bannersHeight, user }: SideBarProps) {
               </ButtonOrLink>
             </Tooltip>
           ))}
+          {/* Finngo: return to Tools. Behind the flag — only renders when the env is set. */}
+          {process.env.NEXT_PUBLIC_FINNGO_TOOLS_URL && (
+            <a
+              href={process.env.NEXT_PUBLIC_FINNGO_TOOLS_URL}
+              data-testid="back-to-finngo-tools"
+              className="text-default hover:bg-subtle hover:text-emphasis mt-0.5 flex w-full items-center rounded-md px-2 py-1.5 text-sm font-medium transition">
+              <Icon
+                name="arrow-left"
+                className="ml-3 h-4 w-4 shrink-0 md:mx-auto lg:ltr:mr-2 lg:rtl:ml-2"
+                aria-hidden="true"
+              />
+              <span className="hidden w-full lg:flex">Back to Finngo Tools</span>
+            </a>
+          )}
           {!IS_VISUAL_REGRESSION_TESTING && <Credits />}
         </div>
       </aside>
