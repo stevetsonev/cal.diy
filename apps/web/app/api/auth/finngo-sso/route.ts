@@ -4,14 +4,17 @@ import { NextResponse } from "next/server";
 /**
  * Finngo SSO landing route.
  *
- * Tools opens `https://cal.finngo.com/api/auth/finngo-sso?token=<supabase_access_token>` in a
- * new tab (or POSTs the token). We hand the token to the `finngo-supabase` NextAuth Credentials
- * provider via an auto-submitting CSRF-bearing form → the provider verifies the Supabase token
- * and find-or-provisions the cal.diy User → the user lands authed. No second login.
+ * The Finngo Tools "Scheduling" control is a FORM that POSTs the Supabase access token to this
+ * route with target="_blank" — the token rides in the request BODY, never in a URL/query
+ * (so it can't leak via browser history, Referer, or server access logs). GET never accepts a
+ * token; it only bounces to the login page. This route then hands the token to the
+ * `finngo-supabase` NextAuth Credentials provider via an auto-submitting CSRF-bearing form →
+ * the provider verifies the Supabase token and find-or-provisions the cal.diy User → the user
+ * lands authed. No second login.
  *
- * The Supabase token is short-lived and travels once over TLS; the NextAuth session cookie then
- * owns the cal.diy side. (v2 hardening: swap token-in-URL for a one-time nonce exchanged
- * server-to-server — see the integration runbook.)
+ * The Supabase token is short-lived and travels once over TLS in a POST body; the NextAuth
+ * session cookie then owns the cal.diy side. (v2 hardening: swap the token POST for a one-time
+ * nonce exchanged server-to-server — see the integration runbook.)
  */
 
 export const dynamic = "force-dynamic";
@@ -55,10 +58,13 @@ async function handle(token: string | null, origin: string) {
   });
 }
 
+// GET NEVER accepts a token (a token in a URL/query would leak via history/Referer/logs).
+// It only bounces to login — the real entry is the POST below.
 export async function GET(req: NextRequest) {
-  return handle(req.nextUrl.searchParams.get("token"), req.nextUrl.origin);
+  return NextResponse.redirect(new URL("/auth/login", req.nextUrl.origin));
 }
 
+// The only token entry point: a form POST (token in the request body) with target="_blank".
 export async function POST(req: NextRequest) {
   const form = await req.formData().catch(() => null);
   const token = form?.get("token");
