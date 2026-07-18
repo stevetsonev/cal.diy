@@ -302,7 +302,12 @@ export const CalComCredentialsProvider = CredentialsProvider({
   authorize: authorizeCredentials,
 });
 
-const providers: Provider[] = [CalComCredentialsProvider];
+// Finngo pure-SSO mode: with FINNGO_SSO_ONLY=1 the password (credentials) and magic-link
+// (email) providers are not registered — only the finngo-supabase SSO bridge remains, removing
+// the whole password-login surface. Default OFF = upstream behavior.
+const FINNGO_SSO_ONLY = process.env.FINNGO_SSO_ONLY === "1";
+
+const providers: Provider[] = FINNGO_SSO_ONLY ? [] : [CalComCredentialsProvider];
 type SamlIdpUser = {
   id: number;
   userId: number;
@@ -363,14 +368,16 @@ if (process.env.SUPABASE_URL) {
   providers.push(FinngoSupabaseProvider);
 }
 
-providers.push(
-  EmailProvider({
-    type: "email",
-    maxAge: 10 * 60 * 60, // Magic links are valid for 10 min only
-    // Here we setup the sendVerificationRequest that calls the email template with the identifier (email) and token to verify.
-    sendVerificationRequest: async (props) => (await import("./sendVerificationRequest")).default(props),
-  })
-);
+if (!FINNGO_SSO_ONLY) {
+  providers.push(
+    EmailProvider({
+      type: "email",
+      maxAge: 10 * 60 * 60, // Magic links are valid for 10 min only
+      // Here we setup the sendVerificationRequest that calls the email template with the identifier (email) and token to verify.
+      sendVerificationRequest: async (props) => (await import("./sendVerificationRequest")).default(props),
+    })
+  );
+}
 
 function isNumber(n: string) {
   return !Number.isNaN(parseFloat(n)) && !Number.isNaN(+n);

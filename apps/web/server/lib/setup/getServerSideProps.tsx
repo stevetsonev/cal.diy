@@ -16,6 +16,16 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
       notFound: true,
     } as const;
   }
+
+  // First-run setup is only for a fresh (0-user) install. Once any user exists the setup API
+  // already rejects with "No setup needed" — mirror that here so the create-admin FORM is not
+  // rendered to anonymous visitors on a public deploy. Logged-in ADMINs may still access the
+  // wizard's later steps.
+  if (userCount !== 0 && session?.user.role !== UserPermissionRole.ADMIN) {
+    return {
+      redirect: { destination: "/auth/login", permanent: false },
+    } as const;
+  }
   // direct access is intentional.
   const deploymentRepo = { getLicenseKeyWithId: async (_id: number) => null as string | null };
   const licenseKey = await deploymentRepo.getLicenseKeyWithId(1);
