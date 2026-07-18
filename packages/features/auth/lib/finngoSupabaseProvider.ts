@@ -1,6 +1,7 @@
 import CredentialsProvider from "next-auth/providers/credentials";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
+import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
 import prisma from "@calcom/prisma";
 import { IdentityProvider } from "@calcom/prisma/enums";
 
@@ -82,6 +83,31 @@ async function findOrProvisionUser(id: FinngoIdentity) {
   });
 }
 
+/**
+ * Self-heal-on-login: SSO-provisioned users skip cal.com's onboarding, which is where the
+ * default availability Schedule is normally created — leaving defaultScheduleId null and the
+ * availability UI non-functional. On every login, idempotently top up a missing default
+ * schedule using cal.com's own canonical shape (mirrors the availability create.handler:
+ * DEFAULT_SCHEDULE Mon-Fri 9-17 + user's timeZone). Also repairs any past partial provision.
+ */
+async function ensureDefaultSchedule(user: { id: number; timeZone: string | null; defaultScheduleId: number | null }) {
+  if (user.defaultScheduleId != null) return;
+  const availability = getAvailabilityFromSchedule(DEFAULT_SCHEDULE);
+  const schedule = await prisma.schedule.create({
+    data: {
+      name: "Working Hours",
+      user: { connect: { id: user.id } },
+      timeZone: user.timeZone ?? undefined,
+      availability: {
+        createMany: {
+          data: availability.map((a) => ({ days: a.days, startTime: a.startTime, endTime: a.endTime })),
+        },
+      },
+    },
+  });
+  await prisma.user.update({ where: { id: user.id }, data: { defaultScheduleId: schedule.id } });
+}
+
 async function authorizeFinngoSupabase(
   credentials: Record<"supabaseToken", string> | undefined
 ): Promise<{ id: number; email: string; name: string | null; username: string | null } | null> {
@@ -91,6 +117,7 @@ async function authorizeFinngoSupabase(
   const identity = await verifyFinngoSupabaseToken(token);
   const user = await findOrProvisionUser(identity);
   if (user.locked) throw new Error("UserAccountLocked");
+  await ensureDefaultSchedule(user);
   return { id: user.id, email: user.email, name: user.name, username: user.username };
 }
 
