@@ -3,7 +3,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 import { DEFAULT_SCHEDULE, getAvailabilityFromSchedule } from "@calcom/lib/availability";
 import prisma from "@calcom/prisma";
-import { IdentityProvider } from "@calcom/prisma/enums";
+import { IdentityProvider, UserPermissionRole } from "@calcom/prisma/enums";
 
 /**
  * Finngo Supabase SSO bridge.
@@ -33,6 +33,20 @@ interface FinngoIdentity {
   sub: string;
   email: string;
   name?: string;
+  /** cal.diy role derived from the TRUSTED `app_metadata.role` claim (see resolveUserRole). */
+  role: UserPermissionRole;
+}
+
+/**
+ * Map the Finngo Supabase `app_metadata.role` claim to a cal.diy role — ADMIN BY CONSTRUCTION,
+ * not incidentally. Fail-closed: ONLY the exact string `"admin"` maps to ADMIN; anything else
+ * (absent, other roles, wrong case, non-string truthy) is USER. The claim MUST come from
+ * `app_metadata` (admin/issuer-controlled) — NEVER `user_metadata`, which the user can edit
+ * themselves via Supabase updateUser (privilege-escalation vector).
+ */
+export function resolveUserRole(appMetadata: unknown): UserPermissionRole {
+  const role = (appMetadata as { role?: unknown } | null | undefined)?.role;
+  return role === "admin" ? UserPermissionRole.ADMIN : UserPermissionRole.USER;
 }
 
 async function verifyFinngoSupabaseToken(token: string): Promise<FinngoIdentity> {
@@ -51,7 +65,9 @@ async function verifyFinngoSupabaseToken(token: string): Promise<FinngoIdentity>
   if (!sub) throw new Error("Finngo token missing sub");
   const userMeta = (payload.user_metadata ?? {}) as { full_name?: string };
   const email = String((payload as { email?: string }).email ?? "").trim().toLowerCase();
-  return { sub, email, name: userMeta.full_name };
+  // Role from app_metadata ONLY (issuer-controlled; user_metadata is user-editable — never trust it).
+  const role = resolveUserRole(payload.app_metadata);
+  return { sub, email, name: userMeta.full_name, role };
 }
 
 async function findOrProvisionUser(id: FinngoIdentity) {
@@ -59,7 +75,16 @@ async function findOrProvisionUser(id: FinngoIdentity) {
   const existing = await prisma.user.findFirst({
     where: { identityProvider: IdentityProvider.SUPABASE, identityProviderId: id.sub },
   });
-  if (existing) return existing;
+  if (existing) {
+    // ROLE SYNC ON LOGIN: the Supabase app_metadata.role claim is the source of truth for
+    // SSO-provisioned users — elevation AND demotion in Supabase propagate here on next login,
+    // so cal admin status is deterministic, never a leftover manual elevation. (Scoped to
+    // identityProvider=SUPABASE rows only; cal-native users are untouched.)
+    if (existing.role !== id.role) {
+      return prisma.user.update({ where: { id: existing.id }, data: { role: id.role } });
+    }
+    return existing;
+  }
 
   // 2. No sub match → provision. If the email is already taken by a row NOT bound to this sub,
   //    do NOT claim it (would be an email-based takeover) — provision a distinct Finngo-owned
@@ -78,6 +103,8 @@ async function findOrProvisionUser(id: FinngoIdentity) {
       identityProviderId: id.sub, // ← the immutable binding
       emailVerified: new Date(),
       completedOnboarding: true,
+      // Admin BY CONSTRUCTION: app_metadata.role==='admin' → ADMIN, else USER (resolveUserRole).
+      role: id.role,
       // no password: this is an external federated identity.
     },
   });
